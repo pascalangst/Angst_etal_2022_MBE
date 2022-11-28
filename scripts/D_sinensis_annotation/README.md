@@ -1,0 +1,1 @@
+### Materials and scripts for generating a *de novo* annotation of a draft *D. sinensis* genome described in [Jia et al. 2020](https://www.authorea.com/users/328755/articles/455919-daphnia-carinata-genome-provides-insights-into-reproductive-switching)

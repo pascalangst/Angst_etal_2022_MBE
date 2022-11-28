@@ -1,0 +1,64 @@
+//// slim v.3.6 code to simulate piN vs. piS in differently sized populations at equilibrium with sexual reproduction every 8th generation
+// adjust K to the desired size and run until 10xK
+
+// initiallize everything
+initialize() {
+	
+	initializeSLiMModelType(modelType="nonWF");
+	defineGlobal("K", 100); // carrying capacity per subpop
+	
+	initializeMutationRate(1e-8); // mutation rate
+	
+	initializeMutationType("m1", 0.5, "f", 0.0);         // synonymous
+	m1.convertToSubstitution = T;
+	//   initializeMutationType("m2", 0.5, "f", 0.0);         // neutral
+	initializeMutationType("m2", 0.1, "g", -0.03, 0.2);  // mildly deleterious
+	//   initializeMutationType("m2", 0.1, "g", -0.05, 0.5);  // deleterious
+	m2.convertToSubstitution = T;
+	
+	initializeGenomicElementType("g1", c(m1,m2), c(1,1));  // exon
+	
+	// Generate 100000-base chromosome
+	initializeGenomicElement(g1, 0, 100000);
+	
+	initializeRecombinationRate(1e-8);
+}
+
+reproduction() {
+	// every 8th generation do sexual reproduction
+	if (sim.generation % 8 == 0)
+	{
+		// generate each offspring with an independently drawn mate
+		mate = subpop.sampleIndividuals(1, exclude=individual);
+		if (mate.size())
+			subpop.addCrossed(individual, mate);
+	}
+	// the rest of the time do clonal reproduction
+	else
+	{
+		subpop.addCloned(individual);
+	}
+}
+
+// create a population of K individuals in generation 1
+1 {
+	sim.addSubpop("p1", K);
+}
+
+early() {
+	// density-dependence
+	for (subpop in sim.subpopulations) {
+		subpop.fitnessScaling = K / subpop.individualCount;
+	}
+}
+
+// run to generation 10xK
+1000 late() {
+	sim.outputFixedMutations(); // get substitutions
+	sim.simulationFinished();   // finish run
+	cat(paste(K, calcHeterozygosity(p1.genomes, p1.genomes.mutationsOfType(m1)),calcHeterozygosity(p1.genomes, p1.genomes.mutationsOfType(m2)), getSeed(), "\n", sep=", "));
+	line = paste(K, calcHeterozygosity(p1.genomes, p1.genomes.mutationsOfType(m1)),calcHeterozygosity(p1.genomes, p1.genomes.mutationsOfType(m2)), getSeed(), sep=", ");
+	
+	// write Heterozygosity to file
+	writeFile("sim_auto.csv", line, append=T);
+}

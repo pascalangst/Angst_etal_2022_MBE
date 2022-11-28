@@ -1,0 +1,211 @@
+### Snakefile for:
+#    mapping trimmed and interleaved reads to a reference (bwa-mem2)
+#    calculating simple mapping stats (samtools flagstat)
+#    generating BAM files from which variants are being called
+#        after removing duplicates, realigning INDELS, and removing unmapped reads
+#    calling variants (SNPs) with GATK's UnifiedGenotyper
+#
+# author: Pascal Angst (pa.angst@gmail.com)
+# date: 2022-05-01
+# v1.1
+#
+# change log:
+# v0.5: use paired-end reads only (no orphaned reads)
+# v0.6: use bwa-mem2
+# v0.7: update config file; switch "protected" to "temp" for picard MarkDuplicates output
+# v1.0: change name
+# v1.1: add genomecov to rule samtools_remove and write mode of coverage distribution to file
+#
+# pipeline based on align_Xinb3.sh v1 by meret j. halter on 2018-10-01
+#
+# This file runs in a conda environment that has snakemake, samtools, bwa, picard and gatk3 installed.
+#
+# USAGE:
+# snakemake -s scripts/mapping_variant-calling_snakefile --cores 6
+# -> additionally, modify the configfile as needed
+#
+# run in "dry run" mode to preview the steps to be run:
+# snakemake -s scripts/mapping_variant-calling_snakefile -n
+#
+# visualize the dependency graph:
+# snakemake -s scripts/mapping_variant-calling_snakefile --dag | dot -Tsvg > analysis/dag.svg
+#
+# visualize the rule graph:
+# snakemake -s scripts/mapping_variant-calling_snakefile --rulegraph | dot -Tsvg > analysis/rulegraph.svg
+#
+# configfile includes reference and sample informations as well as the number of threads one wants to use for mapping.
+# also, one can define the desired output name of the final VCF file
+
+configfile: "scripts/align_Xinb3_spr2014_config.yaml"
+
+ref=config["ref"]
+refname = os.path.splitext(ref)[0]
+samples = config["samples"]
+threads_bwa = config["n_thr"]
+
+
+rule all:
+    input:
+       expand("{out}", out=config["output_vcf"])
+
+
+rule samtools_faidx:
+    input:
+       expand("{ref}", ref=ref)
+    output:
+       expand("{ref}.fai", ref=ref)
+    shell:
+       """
+       bwa-mem2 index {input}
+       samtools faidx {input}
+       """
+
+
+rule bwa_map:
+    input:
+        ref=expand("{ref}", ref=ref),
+        fastq="data/trimmed_reads/{sample}.pe.fq.gz",
+        idx=expand("{ref}.fai", ref=ref)
+    output:
+        temp("data/mapped_reads/{sample}.sam")
+    threads: threads_bwa
+    log:
+        "data/logs/bwa_mem/{sample}.log"
+    shell:
+        "(bwa-mem2 mem -t {threads} -p -M {input.ref} {input.fastq} > {output}) 2> {log}"
+
+
+rule samtools_sort:
+    input:
+        "data/mapped_reads/{sample}.sam"
+    output:
+        temp("data/sorted_reads/{sample}.bam")
+    shell:
+        "samtools view -Sb -@ 2 {input} | samtools sort -T data/sorted_reads/{wildcards.sample} - "
+        " | tee {output} | samtools flagstat - > {output}.flagstat"
+
+
+rule picard_AddOrReplaceReadGroups:
+    input:
+       "data/sorted_reads/{sample}.bam"
+    output:
+       temp("data/readGroups_reads/{sample}.bam")
+    log:
+       "data/logs/AddOrReplaceReadGroups/{sample}.log"
+    params:
+        #"RGLB={sample} RGID={sample} RGPU={sample} RGSM={sample} RGPL=illumina"
+        "RGPL=illumina"
+    shell:
+       """
+       id=$(basename -s .bam {input})
+       (picard AddOrReplaceReadGroups I={input} O={output} RGLB=$id RGID=$id RGPU=$id RGSM=$id {params} ) 2> {log}
+       """
+
+
+rule picard_markDuplicates:
+    input:
+        "data/readGroups_reads/{sample}.bam"
+    output:
+        temp("data/removeDuplicates_reads/{sample}.bam")
+    log:
+        "data/logs/MarkDuplicates/{sample}.log"
+    shell:
+        "(picard MarkDuplicates REMOVE_DUPLICATES=TRUE I={input} O={output} M={output}.txt) 2> {log}"
+
+
+rule samtools_index:
+    input:
+        "data/removeDuplicates_reads/{sample}.bam"
+    output:
+        temp("data/removeDuplicates_reads/{sample}.bam.bai")
+    shell:
+        "samtools index -b {input}"
+
+
+rule picard_CreateSequenceDictionary:
+    input:
+        expand("{ref}", ref=config["ref"])
+    output:
+        expand("{ref}.dict", ref=refname)
+    shell:
+        "picard CreateSequenceDictionary REFERENCE={input} OUTPUT={output}"
+
+
+rule gatk_unifiedGenotyper_indel:
+    input:
+        bam="data/removeDuplicates_reads/{sample}.bam",
+        ref=expand("{ref}", ref=ref),
+        dict=expand("{ref}.dict", ref=refname),
+        idx="data/removeDuplicates_reads/{sample}.bam.bai"
+    output:
+        temp("data/indel_vcf/{sample}.indel.vcf")
+    log:
+        "data/logs/UnifiedGenotyper_indels/{sample}.log"
+    shell:
+        "(gatk3 -T UnifiedGenotyper -R {input.ref} -I {input.bam} -glm INDEL -o {output} -Xmx32G) 2> {log}"
+
+
+rule gatk_RealignerTargetCreator:
+    input:
+        bam="data/removeDuplicates_reads/{sample}.bam",
+        ref=expand("{ref}", ref=ref),
+        vcf="data/indel_vcf/{sample}.indel.vcf",
+        idx="data/removeDuplicates_reads/{sample}.bam.bai"
+    output:
+        temp("data/indel_vcf/{sample}.intervals")
+    log:
+        "data/logs/RealignerTargetCreator/{sample}.log"
+    shell:
+        "(gatk3 -T RealignerTargetCreator -R {input.ref} -known {input.vcf} -I {input.bam} -o {output} -Xmx32G) 2> {log}"
+
+
+rule gatk_IndelRealigner:
+    input:
+        bam="data/removeDuplicates_reads/{sample}.bam",
+        ref=expand("{ref}", ref=ref),
+        vcf="data/indel_vcf/{sample}.indel.vcf",
+        interval="data/indel_vcf/{sample}.intervals",
+        idx="data/removeDuplicates_reads/{sample}.bam.bai"
+    output:
+        temp("data/realigned_reads/{sample}.bam")
+    log:
+        "data/logs/IndelRealigner/{sample}.log"
+    shell:
+        "(gatk3 -T IndelRealigner -R {input.ref} -targetIntervals {input.interval} -known {input.vcf} -I {input.bam} -o {output} -Xmx32G) 2> {log}"
+
+
+rule samtools_remove:
+    input:
+        "data/realigned_reads/{sample}.bam"
+    output:
+        protected("data/remaining_reads/{sample}.bam")
+    shell:
+        """
+        samtools view -b -F 4 {input} > {output}
+        bedtools genomecov -ibam {input} > {output}.txt
+        grep genome {output}.txt | tail -n +2 | awk 'max=="" || $3 > max {{max=$3; l=$2}} END{{ print l}}' > {input}.covmode
+        """
+
+
+rule samtools_index2:
+    input:
+        "data/remaining_reads/{sample}.bam"
+    output:
+        protected("data/remaining_reads/{sample}.bam.bai")
+    shell:
+        "samtools index -b {input}"
+
+
+rule gatk_unifiedGenotyper:
+    input:
+        ref=expand("{ref}", ref=ref),
+        bam=expand("data/remaining_reads/{sample}.bam", sample=samples),
+        idx=expand("data/remaining_reads/{sample}.bam.bai", sample=samples)
+    output:
+        protected(expand("{out}", out=config["output_vcf"]))
+    log:
+        "data/logs/UnifiedGenotyper/vcf.log"
+    params:
+        bams=lambda wildcards, input: [" -I  " + f for f in input.bam]
+    shell:
+        "(gatk3 -T UnifiedGenotyper -mbq 20 -R {input.ref} {params.bams} -o {output} -Xmx32G) 2> {log}"

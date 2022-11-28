@@ -1,0 +1,68 @@
+{
+    "__default__" :
+    {
+        "name"      : "align.{rule}.{wildcards}",
+        "nCPUs"     : 1,
+        "memory"    : "4G",
+        "time"      : "06:00:00",
+        "queue"     : "6hours",
+        "output"    : "data/logs/cluster/{rule}.{wildcards}.out",
+        "error"     : "data/logs/cluster/{rule}.{wildcards}.err",
+        "mailtype"  : "END,FAIL,TIME_LIMIT",
+        "mail"      : "pascal.angst@unibas.ch"
+    },
+    "samtools_faidx" :
+    {
+        "time" : "00:30:00",
+        "queue": "30min"
+    },
+    "bwa_map" :
+    {
+        "time" : "24:00:00",
+        "queue": "1day",
+        "nCPUs" : 8,
+        "memory" : "16G"
+    },
+    "samtools_sort" :
+    {
+        "nCPUs" : 3,
+        "time" : "03:00:00",
+        "queue": "6hours"
+    },
+    "picard_AddOrReplaceReadGroups" :
+    {
+        "time" : "01:30:00",
+        "queue": "6hours"
+    },
+    "picard_markDuplicates" :
+    {
+        "time" : "02:30:00"
+    },
+    "samtools_index" :
+    {
+        "time" : "00:30:00",
+        "queue": "30min"
+    },
+    "samtools_index2" :
+    {
+        "time" : "00:30:00",
+        "queue": "30min"
+    },
+    "gatk_RealignerTargetCreator" :
+    {
+        "time" : "01:00:00",
+        "queue": "6hours"
+    },
+    "gatk_unifiedGenotyper" :
+    {
+        "time" : "120:00:00",
+        "nCPUs" : 1,
+        "memory" : "32G",
+        "queue" : "1week"
+    },
+    "gatk_IndelRealigner" :
+    {
+        "time" : "06:00:00",
+        "queue": "6hours"
+    }
+}
